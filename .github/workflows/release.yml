@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Create or update the GitHub Release for the current manifest version
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Resolve version
+        id: ver
+        run: |
+          set -euo pipefail
+          MANIFEST_VERSION=$(node -p "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8')).version")
+          if [[ ! "$MANIFEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid extension/manifest.json version: $MANIFEST_VERSION"
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG_VERSION" != "$MANIFEST_VERSION" ]]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest version ${MANIFEST_VERSION}"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=${MANIFEST_VERSION}"
+            echo "tag=v${MANIFEST_VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build production packages
+        run: npm run build
+
+      - name: Name versioned assets
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          cp dist/privy-deck-extension-chromium.zip "dist/privy-deck-extension-chromium-${VERSION}.zip"
+          cp dist/privy-deck-extension-firefox.zip "dist/privy-deck-extension-firefox-${VERSION}.zip"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-shield-${{ steps.ver.outputs.version }}
+          path: |
+            dist/privy-deck-extension-chromium-${{ steps.ver.outputs.version }}.zip
+            dist/privy-deck-extension-firefox-${{ steps.ver.outputs.version }}.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if ! git fetch --tags --quiet; then
+              echo "::warning::Could not fetch tags"
+            fi
+            if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "::error::Tag $TAG does not exist. Commit a manifest bump, then run: npm run release"
+              exit 1
+            fi
+            TAG_SHA=$(git rev-list -n 1 "$TAG")
+            if [[ "$TAG_SHA" != "$GITHUB_SHA" ]]; then
+              echo "::error::workflow_dispatch SHA ($GITHUB_SHA) does not match tag $TAG ($TAG_SHA)."
+              exit 1
+            fi
+          fi
+
+          NOTES=$(cat <<EOF
+          ## PrivyDeck Personal Shield ${VERSION}
+
+          Source-built packages. End users should install from official stores.
+
+          | Asset | Target |
+          |-------|--------|
+          | \`privy-deck-extension-chromium-${VERSION}.zip\` | Chrome, Edge, Opera, Brave |
+          | \`privy-deck-extension-firefox-${VERSION}.zip\` | Firefox (AMO) |
+          EOF
+          )
+
+          ASSETS=(
+            "dist/privy-deck-extension-chromium-${VERSION}.zip"
+            "dist/privy-deck-extension-firefox-${VERSION}.zip"
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$TAG" --title "Personal Shield ${VERSION}" --notes "$NOTES"
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "Personal Shield ${VERSION}" \
+              --notes "$NOTES" \
+              --target "${GITHUB_SHA}"
+          fi

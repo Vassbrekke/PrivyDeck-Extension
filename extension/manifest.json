@@ -1,0 +1,82 @@
+{
+  "manifest_version": 3,
+  "name": "PrivyDeck Personal Shield",
+  "description": "Official PrivyDeck browser protection. Sync ads, tracker, and malware blocklists plus lockdown rules from your account.",
+  "version": "1.4.2",
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PrivyDeck Personal Shield",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://privydeck.com/*", "https://www.privydeck.com/*"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "exclude_matches": ["https://privydeck.com/*", "https://www.privydeck.com/*"],
+      "js": ["content-cosmetic.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "top_trackers",
+        "enabled": true,
+        "path": "rules/top-trackers.json"
+      },
+      {
+        "id": "ads",
+        "enabled": false,
+        "path": "rules/ads.json"
+      },
+      {
+        "id": "trackers",
+        "enabled": false,
+        "path": "rules/trackers.json"
+      },
+      {
+        "id": "malware",
+        "enabled": false,
+        "path": "rules/malware.json"
+      },
+      {
+        "id": "annoyances",
+        "enabled": false,
+        "path": "rules/annoyances.json"
+      }
+    ]
+  },
+  "externally_connectable": {
+    "matches": ["https://privydeck.com/*", "https://www.privydeck.com/*"]
+  }
+}

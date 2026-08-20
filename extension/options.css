@@ -1,0 +1,272 @@
+:root {
+  --background: #1a1f2e;
+  --foreground: #f4f4f7;
+  --card: #222838;
+  --primary: #4ade80;
+  --primary-foreground: #0a1f14;
+  --secondary: #2a3144;
+  --muted-foreground: #94a3b8;
+  --border: #3a4258;
+  --link: #86efac;
+  --success: #4ade80;
+  --destructive: #f87171;
+  --destructive-bg: #7f1d1d;
+  --warning-bright: #fbbf24;
+  --primary-muted: #0f2e1f;
+  --radius: 8px;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+header {
+  margin-bottom: 20px;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 0 0 6px;
+}
+
+h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.muted,
+.hint {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.row input {
+  flex: 1;
+}
+
+label.option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--background);
+  cursor: pointer;
+}
+
+label.option.active {
+  border-color: var(--primary);
+  background: var(--primary-muted);
+}
+
+label.option input {
+  margin-top: 3px;
+}
+
+label.option span {
+  display: block;
+}
+
+label.option strong {
+  font-size: 13px;
+}
+
+label.option small {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--background);
+}
+
+.list-row p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.list-row small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+input[type="text"] {
+  box-sizing: border-box;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+button {
+  border: 0;
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+button.danger {
+  background: var(--destructive-bg);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.domain-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.domain-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--background);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.status {
+  min-height: 18px;
+  font-size: 12px;
+}
+
+.status.ok {
+  color: var(--success);
+}
+
+.status.err {
+  color: var(--destructive);
+}
+
+.hidden {
+  display: none;
+}
+
+.inline-btn {
+  background: transparent;
+  border: 0;
+  color: var(--link);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.alert-row,
+.notif-row,
+.rec-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--background);
+}
+
+.alert-row p,
+.notif-row p,
+.rec-row p {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.alert-row small,
+.notif-row small,
+.rec-row small {
+  color: var(--muted-foreground);
+  display: block;
+}
+
+.alert-row .row {
+  margin-top: 8px;
+}
+
+.alert-row .row button {
+  flex: 1;
+}
+
+.notif-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.notif-row.unread {
+  border-color: var(--primary);
+}
+
+.priority-high {
+  color: var(--destructive);
+}
+
+.priority-medium {
+  color: var(--warning-bright);
+}
+
+.priority-low {
+  color: var(--muted-foreground);
+}

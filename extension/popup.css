@@ -1,0 +1,278 @@
+:root {
+  --background: #1a1f2e;
+  --foreground: #f4f4f7;
+  --card: #222838;
+  --primary: #4ade80;
+  --primary-foreground: #0a1f14;
+  --secondary: #2a3144;
+  --muted-foreground: #94a3b8;
+  --muted-dim: #64748b;
+  --border: #3a4258;
+  --link: #86efac;
+  --success: #4ade80;
+  --destructive: #f87171;
+  --destructive-bg: #7f1d1d;
+  --destructive-border: #991b1b;
+  --warning: #d97706;
+  --warning-bright: #fbbf24;
+  --radius: 8px;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  width: 340px;
+}
+
+main {
+  padding: 16px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 2px;
+}
+
+.muted {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.conn-badge {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.conn-badge.ok {
+  border-color: var(--primary);
+  color: var(--success);
+}
+
+.hub-note {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--muted-dim);
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+input,
+select {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+button {
+  flex: 1;
+  border: 0;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+button.danger {
+  background: var(--destructive-bg);
+  border: 1px solid var(--destructive-border);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.score-ring {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid var(--primary);
+  font-size: 18px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.score-ring.good {
+  border-color: var(--success);
+}
+
+.score-ring.warn {
+  border-color: var(--warning);
+}
+
+.score-ring.bad {
+  border-color: #dc2626;
+}
+
+.score-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.score-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+  .stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.category-breakdown {
+  margin: 0 0 12px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.stat {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.stat strong {
+  font-size: 16px;
+}
+
+.stat span {
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.site-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+
+.site-domain {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lockdown-label {
+  margin-bottom: 12px;
+}
+
+.counters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.counter {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-size: 11px;
+  text-align: left;
+}
+
+.counter strong {
+  color: var(--link);
+}
+
+.status {
+  min-height: 18px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.meta {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted-dim);
+}
+
+.links {
+  margin-top: 12px;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.links a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.links a:hover {
+  text-decoration: underline;
+}
+
+.links a.danger-link {
+  color: var(--destructive);
+}
+
+.status.ok {
+  color: var(--success);
+}
+
+.status.err {
+  color: var(--destructive);
+}

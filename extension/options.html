@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PrivyDeck Rules</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Protection rules</h1>
+        <p class="muted">Changes sync with your PrivyDeck account and all connected browsers.</p>
+      </header>
+
+      <section id="authSection" class="card hidden">
+        <p>Connect your account from the extension popup first.</p>
+      </section>
+
+      <div id="rulesSection" class="hidden">
+        <section class="card">
+          <h2>Tracker alerts</h2>
+          <p class="hint">Domains repeatedly trying to track you. Resolve or block them for good.</p>
+          <div id="alertList" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Notifications</h2>
+          <p class="hint">Updates from your PrivyDeck account. <button id="markAllReadBtn" type="button" class="inline-btn">Mark all read</button></p>
+          <div id="notifList" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Recommended next steps</h2>
+          <div id="recsList" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Lockdown mode</h2>
+          <p class="hint">Optional presets that add extra blocking (for example social sites in Focus mode).</p>
+          <div id="lockdownModes" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Protection lists</h2>
+          <p class="hint">Ads, trackers, and malware lists managed on privydeck.com and here. Sync applies them to this browser and your home hub.</p>
+          <p id="engineHint" class="hint muted"></p>
+          <div id="blocklists" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Custom blocked domains</h2>
+          <p class="hint">Always blocked on this browser after sync.</p>
+          <form id="addDomainForm" class="row">
+            <input id="domainInput" type="text" placeholder="example-tracker.com" autocomplete="off" />
+            <button type="submit">Add</button>
+          </form>
+          <ul id="domainList" class="domain-list"></ul>
+        </section>
+
+        <section class="card">
+          <h2>Allowed domains (exceptions)</h2>
+          <p class="hint">Never blocked, even if they appear in a blocklist or lockdown mode.</p>
+          <form id="addAllowForm" class="row">
+            <input id="allowInput" type="text" placeholder="example.com" autocomplete="off" />
+            <button type="submit">Add exception</button>
+          </form>
+          <ul id="allowList" class="domain-list"></ul>
+        </section>
+
+        <section class="card">
+          <h2>Baseline tracker rules</h2>
+          <p class="hint">Core tracker domains from your account. Toggle built-in rules or add your own.</p>
+          <form id="addBaselineForm" class="row">
+            <input id="baselineInput" type="text" placeholder="tracker.example.com" autocomplete="off" />
+            <button type="submit">Add baseline rule</button>
+          </form>
+          <div id="baselineList" class="stack"></div>
+        </section>
+
+        <section class="card">
+          <h2>Effective rules</h2>
+          <p class="hint"><span id="rulesCount">0</span> domains from your account · version <span id="rulesVersion">-</span></p>
+          <button id="syncBtn" type="button" class="secondary">Apply rules now</button>
+        </section>
+      </div>
+
+      <p id="status" class="status"></p>
+    </main>
+    <script src="options.js" type="module"></script>
+  </body>
+</html>

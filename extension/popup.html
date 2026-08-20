@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PrivyDeck Personal Shield</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header class="top">
+        <div>
+          <h1>PrivyDeck</h1>
+          <p class="muted">Personal Shield</p>
+        </div>
+        <span id="connBadge" class="conn-badge">…</span>
+      </header>
+
+      <!-- Connect view -->
+      <section id="connectView" class="hidden">
+        <p class="hub-note">Signed in to privydeck.com</p>
+        <label>
+          Account token
+          <input id="token" type="password" placeholder="From PrivyDeck Setup or Settings" autocomplete="off" />
+        </label>
+        <label>
+          Device name
+          <input id="deviceName" type="text" placeholder="My Browser" />
+        </label>
+        <div class="actions">
+          <button id="saveBtn" type="button">Connect account</button>
+        </div>
+      </section>
+
+      <!-- Dashboard view -->
+      <section id="dashView" class="hidden">
+        <div class="score-row">
+          <div class="score-ring" id="scoreRing">
+            <span id="scoreValue">-</span>
+          </div>
+          <div class="score-meta">
+            <p class="score-label">Privacy score <span id="scoreTrend"></span></p>
+            <p class="score-sub" id="gamification">-</p>
+          </div>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat">
+            <strong id="blockedPage">-</strong>
+            <span>blocked on this page</span>
+          </div>
+          <div class="stat">
+            <strong id="blockedTotal">-</strong>
+            <span>blocked by this browser</span>
+          </div>
+        </div>
+        <p id="categoryBreakdown" class="muted category-breakdown hidden"></p>
+
+        <div class="site-box" id="siteBox">
+          <p class="site-domain" id="siteDomain">-</p>
+          <div class="actions">
+            <button id="trustSiteBtn" type="button" class="secondary">Trust site</button>
+            <button id="reportFpBtn" type="button" class="secondary">Report false positive</button>
+            <button id="blockSiteBtn" type="button" class="danger">Block site</button>
+          </div>
+        </div>
+
+        <label class="lockdown-label">
+          Protection mode
+          <select id="lockdownSelect"></select>
+        </label>
+
+        <div class="counters">
+          <button id="alertsBtn" type="button" class="counter">
+            <strong id="alertsCount">0</strong> tracker alerts
+          </button>
+          <button id="notifsBtn" type="button" class="counter">
+            <strong id="notifsCount">0</strong> notifications
+          </button>
+        </div>
+
+        <div class="actions">
+          <button id="syncBtn" type="button" class="secondary">Sync now</button>
+          <button id="rulesBtn" type="button">Manage rules</button>
+        </div>
+
+        <p class="links">
+          <a id="dashboardLink" href="#">Open dashboard</a>
+          <a id="disconnectLink" href="#" class="danger-link">Disconnect</a>
+        </p>
+      </section>
+
+      <p id="status" class="status"></p>
+      <p id="meta" class="meta"></p>
+    </main>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

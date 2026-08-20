@@ -1,0 +1,33 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "requestDomains": [
+        "google-analytics.com",
+        "googletagmanager.com",
+        "scorecardresearch.com",
+        "hotjar.com",
+        "mixpanel.com",
+        "segment.io",
+        "segment.com",
+        "newrelic.com",
+        "optimizely.com",
+        "mouseflow.com",
+        "clarity.ms",
+        "fullstory.com",
+        "logrocket.com"
+      ],
+      "resourceTypes": [
+        "sub_frame",
+        "script",
+        "xmlhttprequest",
+        "image",
+        "ping",
+        "media",
+        "other"
+      ]
+    }
+  }
+]

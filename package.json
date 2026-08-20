@@ -1,0 +1,34 @@
+{
+  "name": "privydeck-extension",
+  "version": "1.4.2",
+  "private": false,
+  "description": "PrivyDeck Personal Shield — open-source browser extension for ads, trackers, and malware blocking with optional account sync.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "icons": "node scripts/generate-extension-icons.mjs",
+    "build": "node scripts/generate-extension-icons.mjs && node scripts/build-extension.mjs",
+    "build:dev": "node scripts/generate-extension-icons.mjs && node scripts/build-extension.mjs --dev",
+    "release": "node scripts/release-extension.mjs"
+  },
+  "keywords": [
+    "privacy",
+    "browser-extension",
+    "adblocker",
+    "tracker-blocker",
+    "chrome",
+    "firefox",
+    "privydeck"
+  ],
+  "author": "Vassbrekke AS",
+  "license": "GPL-2.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Vassbrekke/PrivyDeck-Extension.git"
+  },
+  "homepage": "https://privydeck.com",
+  "bugs": {
+    "url": "https://github.com/Vassbrekke/PrivyDeck-Extension/issues"
+  }
+}

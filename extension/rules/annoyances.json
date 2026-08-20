@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "requestDomains": [
+        "facebook.net",
+        "connect.facebook.net",
+        "platform.twitter.com",
+        "syndication.twitter.com",
+        "widgets.pinterest.com",
+        "platform.linkedin.com"
+      ],
+      "resourceTypes": [
+        "sub_frame",
+        "script",
+        "xmlhttprequest",
+        "image",
+        "ping",
+        "media",
+        "other"
+      ]
+    }
+  }
+]
