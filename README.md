@@ -60,6 +60,12 @@ npm run release
 
 That pushes tag `v{version}`. GitHub Actions builds production zips and attaches them to the GitHub Release.
 
+## Security
+
+Report vulnerabilities privately — see [SECURITY.md](SECURITY.md). Do not open a public issue for an unpatched bug.
+
+Public trust notes (permissions, sync, builds): https://privydeck.com/trust
+
 ## License
 
 [GNU GPL v2.0](LICENSE). Copyright © 2026 Vassbrekke AS.
