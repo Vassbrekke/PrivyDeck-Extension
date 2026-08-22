@@ -62,4 +62,4 @@ That pushes tag `v{version}`. GitHub Actions builds production zips and attaches
 
 ## License
 
-[GNU GPL v2.0 or later](LICENSE). Copyright © 2026 Vassbrekke AS.
+[GNU GPL v2.0](LICENSE). Copyright © 2026 Vassbrekke AS.
