@@ -22,7 +22,7 @@
     "privydeck"
   ],
   "author": "Vassbrekke AS",
-  "license": "GPL-2.0-or-later",
+  "license": "GPL-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Vassbrekke/PrivyDeck-Extension.git"
