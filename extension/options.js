@@ -17,6 +17,10 @@ const baselineInput = document.getElementById("baselineInput");
 const rulesCountEl = document.getElementById("rulesCount");
 const rulesVersionEl = document.getElementById("rulesVersion");
 const syncBtn = document.getElementById("syncBtn");
+const rollbackBtn = document.getElementById("rollbackBtn");
+const resumeBtn = document.getElementById("resumeBtn");
+const pinHint = document.getElementById("pinHint");
+const policyLogEl = document.getElementById("policyLog");
 const statusEl = document.getElementById("status");
 const alertListEl = document.getElementById("alertList");
 const notifListEl = document.getElementById("notifList");
@@ -465,7 +469,7 @@ function renderAll(state) {
   renderDomains(state);
   renderAllowDomains(state);
   renderBaselineDomains(state);
-  rulesCountEl.textContent = String(state.blockDomains.length);
+  rulesCountEl.textContent = String(state.blockDomainCount ?? state.blockDomains?.length ?? 0);
   rulesVersionEl.textContent = state.rulesVersion;
   const engineEl = document.getElementById("engineHint");
   if (engineEl) {
@@ -483,6 +487,38 @@ async function applyRules() {
       else resolve(res);
     });
   });
+}
+
+function sendBackground(type, extra = {}) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type, ...extra }, (res) => {
+      resolve(res ?? { ok: false, error: chrome.runtime.lastError?.message });
+    });
+  });
+}
+
+async function renderPolicyState() {
+  const state = await sendBackground("PRIVYDECK_POLICY_STATE");
+  if (!state?.ok) return;
+  pinHint?.classList.toggle("hidden", !state.pinned);
+  resumeBtn?.classList.toggle("hidden", !state.pinned);
+  if (rollbackBtn) rollbackBtn.disabled = !state.hasRollback;
+  if (policyLogEl) {
+    policyLogEl.replaceChildren();
+    const rows = state.policyLog || [];
+    if (rows.length === 0) {
+      const empty = document.createElement("li");
+      empty.textContent = "No local policy changes yet.";
+      policyLogEl.appendChild(empty);
+    } else {
+      for (const row of rows.slice(0, 40)) {
+        const li = document.createElement("li");
+        const when = row.at ? new Date(row.at).toLocaleString() : "";
+        li.textContent = `${when} · ${row.action}${row.domain ? ` · ${row.domain}` : ""}${row.detail ? ` · ${row.detail}` : ""}`;
+        policyLogEl.appendChild(li);
+      }
+    }
+  }
 }
 
 async function loadRules() {
@@ -506,6 +542,7 @@ async function loadRules() {
   }
 
   loadDashboard().catch(() => {});
+  renderPolicyState().catch(() => {});
 }
 
 markAllReadBtn.addEventListener("click", async () => {
@@ -544,6 +581,9 @@ addAllowForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const domain = allowInput.value.trim();
   if (!domain) return;
+  if (!window.confirm(`Permanently allow ${domain}? This is an allowlist exception, not a false-positive report.`)) {
+    return;
+  }
 
   setStatus("Adding exception…");
   try {
@@ -553,10 +593,51 @@ addAllowForm.addEventListener("submit", async (event) => {
     });
     allowInput.value = "";
     renderAll(next);
+    await sendBackground("PRIVYDECK_POLICY_LOG", {
+      action: "allow",
+      domain,
+      detail: "Permanent allowlist",
+    });
     await applyRules();
-    setStatus("Exception added.", "ok");
+    await renderPolicyState();
+    setStatus(`${domain} allowed.`, "ok");
   } catch (err) {
-    setStatus(String(err.message || err), "err");
+    const msg = String(err.message || err);
+    if (/malware-category domain requires explicit confirmation/i.test(msg)) {
+      if (
+        !window.confirm(
+          `${domain} is a malware-category host. Allow it permanently anyway? This disables blocking for that exact domain.`
+        )
+      ) {
+        setStatus("Allowlist cancelled.", "");
+        return;
+      }
+      try {
+        const next = await api("/api/extension/rules", {
+          method: "PATCH",
+          body: JSON.stringify({
+            action: "addAllowDomain",
+            domain,
+            acknowledgeSecurityCategory: true,
+          }),
+        });
+        allowInput.value = "";
+        renderAll(next);
+        await sendBackground("PRIVYDECK_POLICY_LOG", {
+          action: "allow",
+          domain,
+          detail: "Permanent allowlist (malware ack)",
+        });
+        await applyRules();
+        await renderPolicyState();
+        setStatus(`${domain} allowed with malware confirmation.`, "ok");
+        return;
+      } catch (err2) {
+        setStatus(String(err2.message || err2), "err");
+        return;
+      }
+    }
+    setStatus(msg, "err");
   }
 });
 
@@ -584,9 +665,36 @@ syncBtn.addEventListener("click", async () => {
   setStatus("Applying rules…");
   try {
     await applyRules();
+    await renderPolicyState();
     setStatus("Rules applied.", "ok");
   } catch (err) {
     setStatus(String(err.message || err), "err");
+  }
+});
+
+rollbackBtn?.addEventListener("click", async () => {
+  if (!window.confirm("Restore the previous signed rule set on this browser and pause remote updates?")) {
+    return;
+  }
+  setStatus("Restoring previous rules…");
+  const res = await sendBackground("PRIVYDECK_ROLLBACK");
+  if (res?.ok) {
+    await renderPolicyState();
+    setStatus(`Restored ${res.rulesVersion || "previous rules"}. Updates paused.`, "ok");
+  } else {
+    setStatus(res?.error || "Rollback failed", "err");
+  }
+});
+
+resumeBtn?.addEventListener("click", async () => {
+  setStatus("Resuming rule updates…");
+  const res = await sendBackground("PRIVYDECK_RESUME_RULES");
+  if (res?.ok) {
+    await loadRules();
+    await renderPolicyState();
+    setStatus("Remote rule updates resumed.", "ok");
+  } else {
+    setStatus(res?.error || "Could not resume", "err");
   }
 });
 

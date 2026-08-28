@@ -19,9 +19,19 @@ const blockedTotalEl = document.getElementById("blockedTotal");
 const categoryBreakdownEl = document.getElementById("categoryBreakdown");
 const siteBox = document.getElementById("siteBox");
 const siteDomainEl = document.getElementById("siteDomain");
+const siteResourceEl = document.getElementById("siteResource");
+const siteActions = document.getElementById("siteActions");
 const trustSiteBtn = document.getElementById("trustSiteBtn");
 const reportFpBtn = document.getElementById("reportFpBtn");
 const blockSiteBtn = document.getElementById("blockSiteBtn");
+const confirmBox = document.getElementById("confirmBox");
+const confirmTitle = document.getElementById("confirmTitle");
+const confirmDomain = document.getElementById("confirmDomain");
+const confirmDetail = document.getElementById("confirmDetail");
+const confirmSecurityLabel = document.getElementById("confirmSecurityLabel");
+const confirmSecurityAck = document.getElementById("confirmSecurityAck");
+const confirmCancelBtn = document.getElementById("confirmCancelBtn");
+const confirmOkBtn = document.getElementById("confirmOkBtn");
 const lockdownSelect = document.getElementById("lockdownSelect");
 const alertsBtn = document.getElementById("alertsBtn");
 const alertsCountEl = document.getElementById("alertsCount");
@@ -31,6 +41,9 @@ const dashboardLink = document.getElementById("dashboardLink");
 const disconnectLink = document.getElementById("disconnectLink");
 
 let currentSiteDomain = null;
+let currentSiteOrigin = null;
+let currentTabId = null;
+let pendingConfirm = null;
 
 function hubUrl() {
   return PRIVYDECK_EXTENSION_CONFIG.defaultHubUrl;
@@ -110,10 +123,20 @@ async function renderTabStats() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.url?.startsWith("http")) {
-      currentSiteDomain = new URL(tab.url).hostname.replace(/^www\./, "");
+      currentTabId = tab.id ?? null;
+      const parsed = new URL(tab.url);
+      currentSiteDomain = parsed.hostname.replace(/^www\./, "");
+      currentSiteOrigin = parsed.origin;
       siteDomainEl.textContent = currentSiteDomain;
+      if (siteResourceEl) {
+        siteResourceEl.textContent = `Resource: ${currentSiteOrigin}`;
+        siteResourceEl.classList.remove("hidden");
+      }
       siteBox.classList.remove("hidden");
+      hideConfirm();
     } else {
+      currentTabId = null;
+      currentSiteOrigin = null;
       siteBox.classList.add("hidden");
     }
 
@@ -247,44 +270,134 @@ lockdownSelect.addEventListener("change", async () => {
 
 trustSiteBtn.addEventListener("click", async () => {
   if (!currentSiteDomain) return;
-  setStatus(`Trusting ${currentSiteDomain}…`);
-  try {
-    await api("/api/extension/rules", {
-      method: "PATCH",
-      body: JSON.stringify({ action: "addAllowDomain", domain: currentSiteDomain }),
-    });
-    await sendBackgroundMessage({ type: "PRIVYDECK_SYNC" });
-    setStatus(`${currentSiteDomain} added to exceptions.`, "ok");
-  } catch (err) {
-    setStatus(String(err.message || err), "err");
-  }
+  await beginConfirm("allow");
 });
 
 reportFpBtn?.addEventListener("click", async () => {
   if (!currentSiteDomain) return;
-  setStatus(`Reporting false positive for ${currentSiteDomain}…`);
-  try {
-    await api("/api/extension/rules", {
-      method: "PATCH",
-      body: JSON.stringify({ action: "reportFalsePositive", domain: currentSiteDomain }),
-    });
-    await sendBackgroundMessage({ type: "PRIVYDECK_SYNC" });
-    setStatus(`${currentSiteDomain} allowlisted and reported.`, "ok");
-  } catch (err) {
-    setStatus(String(err.message || err), "err");
-  }
+  await beginConfirm("false-positive");
 });
 
 blockSiteBtn.addEventListener("click", async () => {
   if (!currentSiteDomain) return;
-  setStatus(`Blocking ${currentSiteDomain}…`);
+  await beginConfirm("block");
+});
+
+function hideConfirm() {
+  pendingConfirm = null;
+  confirmBox?.classList.add("hidden");
+  siteActions?.classList.remove("hidden");
+  if (confirmSecurityAck) confirmSecurityAck.checked = false;
+}
+
+async function beginConfirm(kind) {
+  const preview = await sendBackgroundMessage({
+    type: "PRIVYDECK_SITE_PREVIEW",
+    domain: currentSiteDomain,
+    tabId: currentTabId,
+  });
+  const category = preview?.category || "trackers";
+  const security = Boolean(preview?.securityCategory);
+  pendingConfirm = { kind, domain: currentSiteDomain, origin: currentSiteOrigin, category, security };
+
+  confirmTitle.textContent =
+    kind === "allow"
+      ? "Permanently allow this domain?"
+      : kind === "false-positive"
+        ? "Report as a false positive?"
+        : "Block this domain everywhere?";
+  confirmDomain.textContent = currentSiteDomain;
+  if (kind === "allow") {
+    confirmDetail.textContent = security
+      ? `${currentSiteOrigin} is malware-category. Allowing it disables blocking for this host. This is not a false-positive report.`
+      : `Permanently allow ${currentSiteDomain} (${currentSiteOrigin}, ${category}). This is an allowlist exception, not a false-positive report.`;
+  } else if (kind === "false-positive") {
+    confirmDetail.textContent = `Report ${currentSiteDomain} (${currentSiteOrigin}, ${category}) as a possible false positive. It stays blocked until you separately allow it.`;
+  } else {
+    confirmDetail.textContent = `Block ${currentSiteDomain} (${currentSiteOrigin}) on this account.`;
+  }
+  confirmSecurityLabel.classList.toggle("hidden", !(kind === "allow" && security));
+  confirmOkBtn.textContent =
+    kind === "allow" ? "Allow permanently" : kind === "false-positive" ? "Report only" : "Block";
+  confirmOkBtn.disabled = kind === "allow" && security;
+  siteActions.classList.add("hidden");
+  confirmBox.classList.remove("hidden");
+}
+
+confirmCancelBtn?.addEventListener("click", hideConfirm);
+
+confirmSecurityAck?.addEventListener("change", () => {
+  if (pendingConfirm?.kind === "allow" && pendingConfirm.security) {
+    confirmOkBtn.disabled = !confirmSecurityAck.checked;
+  }
+});
+
+confirmOkBtn?.addEventListener("click", async () => {
+  if (!pendingConfirm?.domain) return;
+  const { kind, domain, security } = pendingConfirm;
+  if (kind === "allow" && security && !confirmSecurityAck?.checked) return;
+
+  const label =
+    kind === "allow" ? `Allowing ${domain}…` : kind === "false-positive" ? `Reporting ${domain}…` : `Blocking ${domain}…`;
+  setStatus(label);
   try {
-    await api("/api/extension/rules", {
-      method: "PATCH",
-      body: JSON.stringify({ action: "addDomain", domain: currentSiteDomain }),
-    });
-    await sendBackgroundMessage({ type: "PRIVYDECK_SYNC" });
-    setStatus(`${currentSiteDomain} blocked everywhere.`, "ok");
+    if (kind === "allow") {
+      try {
+        await api("/api/extension/rules", {
+          method: "PATCH",
+          body: JSON.stringify({
+            action: "addAllowDomain",
+            domain,
+            acknowledgeSecurityCategory: security,
+          }),
+        });
+      } catch (err) {
+        const msg = String(err.message || err);
+        if (/malware-category domain requires explicit confirmation/i.test(msg)) {
+          pendingConfirm.security = true;
+          confirmDetail.textContent = `${currentSiteOrigin} is a malware-category host. Allowing ${domain} permanently disables blocking for this exact domain.`;
+          confirmSecurityLabel.classList.remove("hidden");
+          confirmOkBtn.disabled = !confirmSecurityAck?.checked;
+          setStatus("This host is malware-category. Confirm below to allow it.", "err");
+          return;
+        }
+        throw err;
+      }
+      await sendBackgroundMessage({
+        type: "PRIVYDECK_POLICY_LOG",
+        action: "allow",
+        domain,
+        detail: `Permanent allowlist${security || pendingConfirm.security ? " (malware ack)" : ""}`,
+      });
+      await sendBackgroundMessage({ type: "PRIVYDECK_SYNC" });
+      setStatus(`${domain} added to the allowlist.`, "ok");
+    } else if (kind === "false-positive") {
+      await api("/api/extension/rules", {
+        method: "PATCH",
+        body: JSON.stringify({ action: "reportFalsePositive", domain }),
+      });
+      await sendBackgroundMessage({
+        type: "PRIVYDECK_POLICY_LOG",
+        action: "false-positive",
+        domain,
+        detail: "Reported; not allowlisted",
+      });
+      setStatus(`${domain} reported. It is not allowlisted.`, "ok");
+    } else {
+      await api("/api/extension/rules", {
+        method: "PATCH",
+        body: JSON.stringify({ action: "addDomain", domain }),
+      });
+      await sendBackgroundMessage({
+        type: "PRIVYDECK_POLICY_LOG",
+        action: "block",
+        domain,
+        detail: "Custom block",
+      });
+      await sendBackgroundMessage({ type: "PRIVYDECK_SYNC" });
+      setStatus(`${domain} blocked everywhere.`, "ok");
+    }
+    hideConfirm();
   } catch (err) {
     setStatus(String(err.message || err), "err");
   }

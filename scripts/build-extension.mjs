@@ -52,6 +52,7 @@ const COPY_FILES = [
   "options.html",
   "options.js",
   "options.css",
+  "policy.js",
   "rules/top-trackers.json",
   "rules/ads.json",
   "rules/trackers.json",
@@ -85,6 +86,8 @@ import { PRIVYDECK_HUB_URL } from "./hub.js";
 export const PRIVYDECK_EXTENSION_CONFIG = {
   defaultHubUrl: ${devMode ? JSON.stringify(hubUrl) : "PRIVYDECK_HUB_URL"},
   allowedHubOrigins: ${JSON.stringify(uniqueOrigins)},
+  rulesSigningPublicKey: "",
+  requireRuleSignature: false,
 };
 `;
   fs.writeFileSync(path.join(outDir, "config.js"), config);

@@ -206,13 +206,35 @@ button.danger {
   margin-bottom: 12px;
 }
 
-.site-domain {
-  margin: 0 0 6px;
+.site-resource {
+  margin: 0 0 8px;
+  word-break: break-all;
+  white-space: normal;
+}
+
+.confirm-box {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.confirm-title {
+  margin: 0 0 4px;
   font-size: 12px;
-  font-family: ui-monospace, monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 600;
+}
+
+.confirm-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  margin: 8px 0;
+  color: var(--warning-bright);
+}
+
+.confirm-ack input {
+  margin-top: 2px;
 }
 
 .lockdown-label {

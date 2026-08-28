@@ -58,10 +58,24 @@
 
         <div class="site-box" id="siteBox">
           <p class="site-domain" id="siteDomain">-</p>
-          <div class="actions">
+          <p class="muted site-resource hidden" id="siteResource"></p>
+          <div class="actions" id="siteActions">
             <button id="trustSiteBtn" type="button" class="secondary">Trust site</button>
             <button id="reportFpBtn" type="button" class="secondary">Report false positive</button>
             <button id="blockSiteBtn" type="button" class="danger">Block site</button>
+          </div>
+          <div id="confirmBox" class="confirm-box hidden">
+            <p class="confirm-title" id="confirmTitle">Allow this domain?</p>
+            <p class="site-domain" id="confirmDomain">-</p>
+            <p class="muted" id="confirmDetail"></p>
+            <label id="confirmSecurityLabel" class="confirm-ack hidden">
+              <input id="confirmSecurityAck" type="checkbox" />
+              I understand this is a malware-category domain
+            </label>
+            <div class="actions">
+              <button id="confirmCancelBtn" type="button" class="secondary">Cancel</button>
+              <button id="confirmOkBtn" type="button">Confirm</button>
+            </div>
           </div>
         </div>
 

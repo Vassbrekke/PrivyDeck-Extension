@@ -5,6 +5,15 @@ import {
   engineLabel,
   firefoxCosmeticLimit,
 } from "./engine-info.js";
+import {
+  appendPolicyLog,
+  isReplay,
+  readPolicyState,
+  rememberSnapshot,
+  rollbackToPrevious,
+  setRulesPinned,
+  verifyRuleSignature,
+} from "./policy.js";
 
 const SYNC_ALARM = "privydeck-sync";
 const VERSION_ALARM = "privydeck-version";
@@ -27,6 +36,7 @@ function getMaxDynamicRules() {
 
 let rulesSocket = null;
 let rulesSocketUserId = null;
+let syncInFlight = null;
 /** Firefox webRequest in-memory sets */
 let fxBlockSet = new Set();
 let fxAllowSet = new Set();
@@ -61,6 +71,8 @@ async function getSettings() {
     "platform",
     "lastSync",
     "rulesVersion",
+    "rulesIssuedAt",
+    "rulesPinned",
     "connected",
     "wsUrl",
     "blockedTotal",
@@ -120,9 +132,12 @@ function hostFromUrl(url) {
 
 function domainMatchesSet(hostname, set) {
   if (!hostname || !set?.size) return false;
-  if (set.has(hostname)) return true;
-  for (const d of set) {
-    if (hostname === d || hostname.endsWith(`.${d}`)) return true;
+  let host = hostname;
+  while (host) {
+    if (set.has(host)) return true;
+    const dot = host.indexOf(".");
+    if (dot < 0) return false;
+    host = host.slice(dot + 1);
   }
   return false;
 }
@@ -191,6 +206,33 @@ function updateFirefoxSets(blockDomains, allowDomains) {
     }
   }
   installFirefoxWebRequest();
+}
+
+/** Restore in-memory Firefox sets (and Chromium DNR if the browser dropped them). */
+async function rehydrateEngine() {
+  const s = await getSettings();
+  if (!s.token) return;
+  const allow = s.allowDomains || [];
+  const block = s.blockDomains || [];
+  if (isFirefox()) {
+    updateFirefoxSets(block, allow);
+    return;
+  }
+  if (syncInFlight) return;
+  try {
+    const existing = await chrome.declarativeNetRequest.getDynamicRules();
+    if (existing.length > 0 || (!block.length && !allow.length)) return;
+    const { rulesSnapshot } = await chrome.storage.local.get(["rulesSnapshot"]);
+    await applyProtectionRules(
+      block,
+      allow,
+      true,
+      rulesSnapshot?.dnrRules ?? [],
+      s.categories ?? null
+    );
+  } catch {
+    /* ignore */
+  }
 }
 
 function enableBadgeCounter() {
@@ -382,20 +424,74 @@ async function applyProtectionRules(
 }
 
 export async function syncConfig() {
-  const { hubUrl, token, deviceName, platform } = await getSettings();
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = keepAliveWhile(runSync()).finally(() => {
+    syncInFlight = null;
+  });
+  return syncInFlight;
+}
+
+function keepAliveWhile(promise) {
+  const tick = () => {
+    try {
+      chrome.runtime.getPlatformInfo(() => {});
+    } catch {
+      /* ignore */
+    }
+  };
+  tick();
+  const id = setInterval(tick, 20_000);
+  return Promise.resolve(promise).finally(() => clearInterval(id));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function hubFetch(url, options = {}, retries = 2) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...options,
+        signal: options.signal ?? AbortSignal.timeout(45_000),
+      });
+      if (res.status >= 500 && attempt < retries) {
+        await sleep(400 * 2 ** attempt);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) await sleep(400 * 2 ** attempt);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("Network error");
+}
+
+function engineHeader() {
+  return isFirefox() ? "firefox" : "chromium";
+}
+
+function deviceQuery(deviceName, platform) {
+  const qs = new URLSearchParams();
+  if (deviceName) qs.set("deviceName", deviceName);
+  if (platform) qs.set("platform", platform);
+  return qs.toString() ? `?${qs}` : "";
+}
+
+async function runSync() {
+  const { hubUrl, token, deviceName, platform, rulesVersion } = await getSettings();
   if (!token) throw new Error("Sign in from PrivyDeck and connect your account");
 
   const base = resolveHubUrl(hubUrl);
   let configRes;
   try {
-    const qs = new URLSearchParams();
-    if (deviceName) qs.set("deviceName", deviceName);
-    if (platform) qs.set("platform", platform);
-    const q = qs.toString() ? `?${qs}` : "";
-    configRes = await fetch(`${base}/api/extension/config${q}`, {
+    configRes = await hubFetch(`${base}/api/extension/config${deviceQuery(deviceName, platform)}`, {
       headers: {
         Authorization: `Bearer ${token}`,
-        "X-PrivyDeck-Engine": isFirefox() ? "firefox" : "chromium",
+        "X-PrivyDeck-Engine": engineHeader(),
+        ...(rulesVersion ? { "If-None-Match": `"${rulesVersion}"` } : {}),
       },
     });
   } catch {
@@ -404,17 +500,51 @@ export async function syncConfig() {
     );
   }
 
+  if (configRes.status === 304) {
+    await chrome.storage.local.set({ lastSync: Date.now(), connected: true, hubUrl: base });
+    await rehydrateEngine();
+    const stored = await getSettings();
+    connectRulesSocket(stored.wsUrl, token);
+    return { rulesVersion, unchanged: true };
+  }
+
   if (!configRes.ok) {
     if (configRes.status === 401) {
       throw new Error("Invalid or expired token. Generate a new token in PrivyDeck Setup.");
+    }
+    if (configRes.status === 429) {
+      throw new Error("Server is busy. Try sync again in a minute.");
     }
     throw new Error(`Could not sync protection rules (${configRes.status}). Check the server URL.`);
   }
 
   const config = await configRes.json();
+  const requireSig = Boolean(PRIVYDECK_EXTENSION_CONFIG.requireRuleSignature);
+  const verified = await verifyRuleSignature(
+    config,
+    PRIVYDECK_EXTENSION_CONFIG.rulesSigningPublicKey || "",
+    requireSig
+  );
+  if (!verified.ok) {
+    await appendPolicyLog({ action: "reject", detail: verified.reason });
+    throw new Error(`Rejected remote rules (${verified.reason}). Keeping last known-good set.`);
+  }
+
+  const policy = await readPolicyState();
+  if (policy.rulesPinned) {
+    return config;
+  }
+  if (isReplay(config, policy.rulesIssuedAt)) {
+    await appendPolicyLog({
+      action: "reject",
+      detail: `Replay: issued ${config.rulesIssuedAt} older than pinned ${policy.rulesIssuedAt}`,
+    });
+    throw new Error("Rejected older signed rules. Use rollback only from Protection rules.");
+  }
+
   const applied = await applyProtectionRules(
     config.blockDomains ?? [],
-    config.allowDomains ?? [],
+    [...(config.allowDomains ?? []), ...(config.securityAllowDomains ?? [])],
     true,
     config.dnrRules ?? [],
     config.categories ?? null
@@ -424,37 +554,45 @@ export async function syncConfig() {
   loadCategoryCounts(stored.blockedByCategory);
 
   await chrome.storage.local.set({
-    allowDomains: config.allowDomains ?? [],
+    allowDomains: [...(config.allowDomains ?? []), ...(config.securityAllowDomains ?? [])],
     blockDomains: config.blockDomains ?? [],
     cosmeticRules: config.cosmeticRules ?? [],
     engine: isFirefox() ? "hybrid" : config.engine ?? "dnr",
     categories: config.categories ?? null,
     cnameMapVersion: config.cnameMapVersion ?? CNAME_MAP_VERSION,
   });
+  await rememberSnapshot(config);
+  await appendPolicyLog({
+    action: "apply",
+    detail: `${config.rulesVersion || "rules"}${verified.unsigned ? " (unsigned)" : ""}`,
+  });
 
   const blockedTotal = await accumulateBlockedCount();
 
-  const syncRes = await fetch(`${base}/api/extension/sync`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      deviceName: deviceName || "Browser (PrivyDeck Extension)",
-      platform: platform || "other",
-      rulesApplied: (config.blockDomains ?? []).length + (config.dnrRules ?? []).length,
-      extensionVersion: MANIFEST.version,
-      blockedCount: blockedTotal,
-      blockedByCategory,
-      engine: isFirefox() ? "hybrid" : "dnr",
-      filterRules: applied.filterRules,
-      cosmeticRules: (config.cosmeticRules ?? []).length,
-    }),
-  });
-
-  if (!syncRes.ok) {
-    throw new Error(`Account sync failed (${syncRes.status})`);
+  try {
+    const syncRes = await hubFetch(`${base}/api/extension/sync`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        deviceName: deviceName || "Browser (PrivyDeck Extension)",
+        platform: platform || "other",
+        rulesApplied: (config.blockDomains ?? []).length + (config.dnrRules ?? []).length,
+        extensionVersion: MANIFEST.version,
+        blockedCount: blockedTotal,
+        blockedByCategory,
+        engine: isFirefox() ? "hybrid" : "dnr",
+        filterRules: applied.filterRules,
+        cosmeticRules: (config.cosmeticRules ?? []).length,
+      }),
+    });
+    if (!syncRes.ok && syncRes.status !== 429) {
+      console.warn("[PrivyDeck] Account heartbeat failed:", syncRes.status);
+    }
+  } catch (err) {
+    console.warn("[PrivyDeck] Account heartbeat failed:", String(err?.message || err));
   }
 
   await chrome.storage.local.set({
@@ -462,6 +600,7 @@ export async function syncConfig() {
     wsUrl: config.wsUrl ?? null,
     lastSync: Date.now(),
     rulesVersion: config.rulesVersion ?? null,
+    rulesIssuedAt: Number(config.rulesIssuedAt) || Date.now(),
     connected: true,
   });
 
@@ -470,16 +609,16 @@ export async function syncConfig() {
 }
 
 async function checkRulesVersion() {
-  const { hubUrl, token, rulesVersion } = await getSettings();
-  if (!token) return;
+  const { hubUrl, token, rulesVersion, rulesPinned, deviceName, platform } = await getSettings();
+  if (!token || rulesPinned) return;
 
   const base = resolveHubUrl(hubUrl);
   try {
-    const res = await fetch(`${base}/api/extension/config`, {
+    const res = await hubFetch(`${base}/api/extension/config${deviceQuery(deviceName, platform)}`, {
       method: "HEAD",
       headers: {
         Authorization: `Bearer ${token}`,
-        "X-PrivyDeck-Engine": isFirefox() ? "firefox" : "chromium",
+        "X-PrivyDeck-Engine": engineHeader(),
       },
     });
     if (!res.ok) return;
@@ -494,7 +633,11 @@ async function checkRulesVersion() {
 
 function connectRulesSocket(wsUrl, token) {
   if (!wsUrl || !token) return;
-  if (rulesSocket && rulesSocketUserId === token) return;
+  const open =
+    rulesSocket &&
+    rulesSocketUserId === token &&
+    (rulesSocket.readyState === WebSocket.CONNECTING || rulesSocket.readyState === WebSocket.OPEN);
+  if (open) return;
 
   try {
     rulesSocket?.close();
@@ -569,6 +712,10 @@ async function disconnectAccount() {
     "connected",
     "lastSync",
     "rulesVersion",
+    "rulesIssuedAt",
+    "rulesPinned",
+    "rulesSnapshot",
+    "rulesSnapshotPrev",
     "wsUrl",
     "blockedTotal",
     "lastMatchedAt",
@@ -581,6 +728,7 @@ async function disconnectAccount() {
     "blockedByCategory",
   ]);
   blockedByCategory = { ads: 0, trackers: 0, malware: 0, annoyances: 0 };
+  await appendPolicyLog({ action: "disconnect", detail: "Account disconnected; baseline lists stay on" });
   await applyProtectionRules([], [], false, [], null);
 }
 
@@ -597,13 +745,15 @@ function isSafeCosmeticSelector(selector) {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "PRIVYDECK_SYNC") {
     syncConfig()
-      .then((config) => sendResponse({ ok: true, config }))
+      .then((config) => sendResponse({ ok: true, rulesVersion: config?.rulesVersion ?? null }))
       .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
     return true;
   }
   if (message?.type === "PRIVYDECK_SAVE") {
     saveAndSync(message.settings)
-      .then((config) => sendResponse({ ok: true, config, message: "Connected and synced." }))
+      .then((config) =>
+        sendResponse({ ok: true, rulesVersion: config?.rulesVersion ?? null, message: "Connected and synced." })
+      )
       .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
     return true;
   }
@@ -620,6 +770,87 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true, total, blockedByCategory: cats || blockedByCategory });
       })
       .catch(() => sendResponse({ ok: true, total: 0, blockedByCategory }));
+    return true;
+  }
+  if (message?.type === "PRIVYDECK_SITE_PREVIEW") {
+    const domain = String(message.domain || "").toLowerCase().replace(/^www\./, "");
+    const tabId = Number.isInteger(message.tabId) ? message.tabId : undefined;
+    const category = categorizeHost(domain);
+    let securityCategory = category === "malware";
+    const preview = async () => {
+      if (tabId == null || !chrome.declarativeNetRequest?.getMatchedRules) {
+        return { ok: true, domain, category, securityCategory };
+      }
+      try {
+        const { rulesMatchedInfo } = await chrome.declarativeNetRequest.getMatchedRules({ tabId });
+        if (rulesMatchedInfo.some((info) => info.rule.rulesetId === "malware")) {
+          securityCategory = true;
+        }
+      } catch {
+        /* matched-rule lookup is best-effort */
+      }
+      return { ok: true, domain, category, securityCategory };
+    };
+    preview().then(sendResponse).catch(() => sendResponse({ ok: true, domain, category, securityCategory }));
+    return true;
+  }
+  if (message?.type === "PRIVYDECK_POLICY_STATE") {
+    readPolicyState()
+      .then((state) =>
+        sendResponse({
+          ok: true,
+          pinned: Boolean(state.rulesPinned),
+          rulesVersion: state.rulesVersion ?? state.rulesSnapshot?.rulesVersion ?? null,
+          hasRollback: Boolean(state.rulesSnapshotPrev),
+          policyLog: Array.isArray(state.policyLog) ? state.policyLog : [],
+        })
+      )
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (message?.type === "PRIVYDECK_ROLLBACK") {
+    rollbackToPrevious()
+      .then(async (snapshot) => {
+        if (!snapshot) {
+          sendResponse({ ok: false, error: "No previous rule set to restore." });
+          return;
+        }
+        await applyProtectionRules(
+          snapshot.blockDomains ?? [],
+          [...(snapshot.allowDomains ?? []), ...(snapshot.securityAllowDomains ?? [])],
+          true,
+          snapshot.dnrRules ?? [],
+          snapshot.categories ?? null
+        );
+        await chrome.storage.local.set({
+          allowDomains: [
+            ...(snapshot.allowDomains ?? []),
+            ...(snapshot.securityAllowDomains ?? []),
+          ],
+          blockDomains: snapshot.blockDomains ?? [],
+          cosmeticRules: snapshot.cosmeticRules ?? [],
+          categories: snapshot.categories ?? null,
+        });
+        sendResponse({ ok: true, rulesVersion: snapshot.rulesVersion });
+      })
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (message?.type === "PRIVYDECK_RESUME_RULES") {
+    setRulesPinned(false)
+      .then(() => syncConfig())
+      .then((config) => sendResponse({ ok: true, rulesVersion: config?.rulesVersion ?? null }))
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (message?.type === "PRIVYDECK_POLICY_LOG") {
+    appendPolicyLog({
+      action: String(message.action || "change"),
+      domain: message.domain,
+      detail: message.detail,
+    })
+      .then(() => sendResponse({ ok: true }))
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
     return true;
   }
   if (message?.type === "PRIVYDECK_GET_COSMETICS") {
@@ -700,10 +931,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.storage.local.get(["token", "wsUrl", "rulesVersion"], (data) => {
-    if (data.token) {
-      connectRulesSocket(data.wsUrl, data.token);
-      checkRulesVersion().catch(() => {});
-    }
-  });
+  restoreSession()
+    .then(() => checkRulesVersion())
+    .catch(() => {});
 });
+
+restoreSession().catch(() => {});
+
+async function restoreSession() {
+  const data = await chrome.storage.local.get(["token", "wsUrl"]);
+  if (!data.token) return;
+  connectRulesSocket(data.wsUrl, data.token);
+  await rehydrateEngine();
+}

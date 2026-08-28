@@ -4,6 +4,7 @@ window.addEventListener("message", (event) => {
   if (event.origin !== window.location.origin) return;
 
   if (event.data?.type === "PRIVYDECK_CONNECT") {
+    window.postMessage({ type: "PRIVYDECK_CONNECT_ACK" }, window.location.origin);
     chrome.runtime
       .sendMessage({
         type: "PRIVYDECK_SAVE",

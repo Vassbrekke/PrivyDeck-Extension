@@ -60,7 +60,7 @@
 
         <section class="card">
           <h2>Allowed domains (exceptions)</h2>
-          <p class="hint">Never blocked, even if they appear in a blocklist or lockdown mode.</p>
+          <p class="hint">Never blocked after you explicitly allow them. False-positive reports do not add exceptions. Malware-category hosts require an extra confirmation.</p>
           <form id="addAllowForm" class="row">
             <input id="allowInput" type="text" placeholder="example.com" autocomplete="off" />
             <button type="submit">Add exception</button>
@@ -81,7 +81,18 @@
         <section class="card">
           <h2>Effective rules</h2>
           <p class="hint"><span id="rulesCount">0</span> domains from your account · version <span id="rulesVersion">-</span></p>
-          <button id="syncBtn" type="button" class="secondary">Apply rules now</button>
+          <p id="pinHint" class="hint hidden">Remote rule updates are paused after rollback. Resume to apply signed updates again.</p>
+          <div class="row">
+            <button id="syncBtn" type="button" class="secondary">Apply rules now</button>
+            <button id="rollbackBtn" type="button" class="secondary">Restore previous rules</button>
+            <button id="resumeBtn" type="button" class="hidden">Resume rule updates</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Local policy log</h2>
+          <p class="hint">Allowlist and rule-set changes stay on this device. PrivyDeck does not receive this log.</p>
+          <ul id="policyLog" class="domain-list"></ul>
         </section>
       </div>
 
