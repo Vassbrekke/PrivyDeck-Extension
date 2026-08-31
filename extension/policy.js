@@ -67,7 +67,7 @@ export async function verifyRuleSignature(config, publicKeyB64, requireSig) {
     return { ok: false, reason: "unsupported rule signature" };
   }
   if (!publicKeyB64) {
-    if (requireSig) return { ok: false, reason: "no rule-signing public key" };
+    if (requireSig) return { ok: false, reason: "this build has no pinned rule-signing public key" };
     return { ok: true, unsigned: true };
   }
 

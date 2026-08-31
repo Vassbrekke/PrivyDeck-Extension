@@ -509,13 +509,29 @@ async function runSync() {
   }
 
   if (!configRes.ok) {
+    let serverError = "";
+    try {
+      const body = await configRes.json();
+      if (typeof body?.error === "string" && body.error.length > 0 && body.error.length <= 180) {
+        serverError = body.error;
+      }
+    } catch {
+      /* non-JSON error body */
+    }
     if (configRes.status === 401) {
-      throw new Error("Invalid or expired token. Generate a new token in PrivyDeck Setup.");
+      throw new Error("Invalid or expired token. Generate a new token in Settings → Browser extension.");
     }
     if (configRes.status === 429) {
       throw new Error("Server is busy. Try sync again in a minute.");
     }
-    throw new Error(`Could not sync protection rules (${configRes.status}). Check the server URL.`);
+    if (configRes.status === 503) {
+      throw new Error(
+        serverError || "Could not sync protection rules. The server is not signing rule payloads."
+      );
+    }
+    throw new Error(
+      serverError || `Could not sync protection rules (${configRes.status}). Check the server URL.`
+    );
   }
 
   const config = await configRes.json();

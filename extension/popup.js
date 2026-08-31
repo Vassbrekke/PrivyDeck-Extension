@@ -214,7 +214,7 @@ async function loadSettings() {
   } else {
     tokenEl.value = data.token || "";
     deviceNameEl.value = data.deviceName || "My Browser";
-    setStatus("Open privydeck.com → Setup and click Connect extension", "");
+    setStatus("Open Settings → Browser extension, then Generate account token", "");
   }
 }
 
@@ -228,7 +228,7 @@ saveBtn.addEventListener("click", async () => {
   };
 
   if (!settings.token) {
-    setStatus("Paste the token from PrivyDeck Setup or Settings.", "err");
+    setStatus("Paste the token from Settings → Browser extension.", "err");
     return;
   }
 
