@@ -17,6 +17,9 @@ const gamificationEl = document.getElementById("gamification");
 const blockedPageEl = document.getElementById("blockedPage");
 const blockedTotalEl = document.getElementById("blockedTotal");
 const categoryBreakdownEl = document.getElementById("categoryBreakdown");
+const blockedListEl = document.getElementById("blockedList");
+const pauseSiteBtn = document.getElementById("pauseSiteBtn");
+const hideElBtn = document.getElementById("hideElBtn");
 const siteBox = document.getElementById("siteBox");
 const siteDomainEl = document.getElementById("siteDomain");
 const siteResourceEl = document.getElementById("siteResource");
@@ -44,6 +47,7 @@ let currentSiteDomain = null;
 let currentSiteOrigin = null;
 let currentTabId = null;
 let pendingConfirm = null;
+let sitePaused = false;
 
 function hubUrl() {
   return PRIVYDECK_EXTENSION_CONFIG.defaultHubUrl;
@@ -140,13 +144,17 @@ async function renderTabStats() {
       siteBox.classList.add("hidden");
     }
 
-    const { rulesMatchedInfo } = await chrome.declarativeNetRequest.getMatchedRules(
-      tab?.id != null ? { tabId: tab.id } : {}
-    );
-    const blocked = rulesMatchedInfo.filter(
-      (info) => !(info.rule.rulesetId === "_dynamic" && info.rule.ruleId >= 5000)
-    );
-    blockedPageEl.textContent = String(blocked.length);
+    const stats = await sendBackgroundMessage({
+      type: "PRIVYDECK_PAGE_STATS",
+      tabId: currentTabId,
+      domain: currentSiteDomain,
+    });
+    sitePaused = Boolean(stats?.paused);
+    blockedPageEl.textContent = stats?.ok ? String(stats.blockedOnPage) : "-";
+    renderBlockedHosts(stats?.hosts || []);
+    if (pauseSiteBtn) {
+      pauseSiteBtn.textContent = sitePaused ? "Resume this site" : "Pause on this site";
+    }
   } catch {
     blockedPageEl.textContent = "-";
   }
@@ -268,6 +276,32 @@ lockdownSelect.addEventListener("change", async () => {
   }
 });
 
+pauseSiteBtn?.addEventListener("click", async () => {
+  if (!currentSiteDomain) return;
+  if (sitePaused) {
+    setStatus(`Resuming protection on ${currentSiteDomain}…`);
+    const res = await sendBackgroundMessage({ type: "PRIVYDECK_RESUME_SITE", domain: currentSiteDomain });
+    if (!res?.ok) {
+      setStatus(res?.error || "Could not resume this site", "err");
+      return;
+    }
+    setStatus(`Protection resumed on ${currentSiteDomain}. Reload the page.`, "ok");
+    await renderTabStats();
+    return;
+  }
+  await beginConfirm("pause");
+});
+
+hideElBtn?.addEventListener("click", async () => {
+  if (currentTabId == null) return;
+  const res = await chrome.tabs.sendMessage(currentTabId, { type: "PRIVYDECK_ZAP_ARM" }).catch(() => null);
+  if (!res?.ok) {
+    setStatus("Reload the page, then try hiding an element again.", "err");
+    return;
+  }
+  window.close();
+});
+
 trustSiteBtn.addEventListener("click", async () => {
   if (!currentSiteDomain) return;
   await beginConfirm("allow");
@@ -282,6 +316,27 @@ blockSiteBtn.addEventListener("click", async () => {
   if (!currentSiteDomain) return;
   await beginConfirm("block");
 });
+
+function renderBlockedHosts(hosts) {
+  if (!blockedListEl) return;
+  blockedListEl.replaceChildren();
+  if (!hosts.length) {
+    blockedListEl.classList.add("hidden");
+    return;
+  }
+  for (const row of hosts) {
+    const li = document.createElement("li");
+    const host = document.createElement("span");
+    host.className = "host";
+    host.textContent = row.host;
+    const cat = document.createElement("span");
+    cat.className = "cat";
+    cat.textContent = `${row.category} · ${row.count}`;
+    li.append(host, cat);
+    blockedListEl.append(li);
+  }
+  blockedListEl.classList.remove("hidden");
+}
 
 function hideConfirm() {
   pendingConfirm = null;
@@ -305,7 +360,9 @@ async function beginConfirm(kind) {
       ? "Permanently allow this domain?"
       : kind === "false-positive"
         ? "Report as a false positive?"
-        : "Block this domain everywhere?";
+        : kind === "pause"
+          ? "Pause protection on this site?"
+          : "Block this domain everywhere?";
   confirmDomain.textContent = currentSiteDomain;
   if (kind === "allow") {
     confirmDetail.textContent = security
@@ -313,13 +370,23 @@ async function beginConfirm(kind) {
       : `Permanently allow ${currentSiteDomain} (${currentSiteOrigin}, ${category}). This is an allowlist exception, not a false-positive report.`;
   } else if (kind === "false-positive") {
     confirmDetail.textContent = `Report ${currentSiteDomain} (${currentSiteOrigin}, ${category}) as a possible false positive. It stays blocked until you separately allow it.`;
+  } else if (kind === "pause") {
+    confirmDetail.textContent = security
+      ? `Pause blocking and element hiding on ${currentSiteDomain} until you resume or close the browser. This host is malware-category and will not be added to your allowlist.`
+      : `Pause blocking and element hiding on ${currentSiteDomain} for this browser session. It is not added to your allowlist.`;
   } else {
     confirmDetail.textContent = `Block ${currentSiteDomain} (${currentSiteOrigin}) on this account.`;
   }
-  confirmSecurityLabel.classList.toggle("hidden", !(kind === "allow" && security));
+  confirmSecurityLabel.classList.toggle("hidden", !((kind === "allow" || kind === "pause") && security));
   confirmOkBtn.textContent =
-    kind === "allow" ? "Allow permanently" : kind === "false-positive" ? "Report only" : "Block";
-  confirmOkBtn.disabled = kind === "allow" && security;
+    kind === "allow"
+      ? "Allow permanently"
+      : kind === "false-positive"
+        ? "Report only"
+        : kind === "pause"
+          ? "Pause this session"
+          : "Block";
+  confirmOkBtn.disabled = (kind === "allow" || kind === "pause") && security;
   siteActions.classList.add("hidden");
   confirmBox.classList.remove("hidden");
 }
@@ -327,7 +394,7 @@ async function beginConfirm(kind) {
 confirmCancelBtn?.addEventListener("click", hideConfirm);
 
 confirmSecurityAck?.addEventListener("change", () => {
-  if (pendingConfirm?.kind === "allow" && pendingConfirm.security) {
+  if ((pendingConfirm?.kind === "allow" || pendingConfirm?.kind === "pause") && pendingConfirm.security) {
     confirmOkBtn.disabled = !confirmSecurityAck.checked;
   }
 });
@@ -335,10 +402,16 @@ confirmSecurityAck?.addEventListener("change", () => {
 confirmOkBtn?.addEventListener("click", async () => {
   if (!pendingConfirm?.domain) return;
   const { kind, domain, security } = pendingConfirm;
-  if (kind === "allow" && security && !confirmSecurityAck?.checked) return;
+  if ((kind === "allow" || kind === "pause") && security && !confirmSecurityAck?.checked) return;
 
   const label =
-    kind === "allow" ? `Allowing ${domain}…` : kind === "false-positive" ? `Reporting ${domain}…` : `Blocking ${domain}…`;
+    kind === "allow"
+      ? `Allowing ${domain}…`
+      : kind === "false-positive"
+        ? `Reporting ${domain}…`
+        : kind === "pause"
+          ? `Pausing ${domain}…`
+          : `Blocking ${domain}…`;
   setStatus(label);
   try {
     if (kind === "allow") {
@@ -383,6 +456,10 @@ confirmOkBtn?.addEventListener("click", async () => {
         detail: "Reported; not allowlisted",
       });
       setStatus(`${domain} reported. It is not allowlisted.`, "ok");
+    } else if (kind === "pause") {
+      const res = await sendBackgroundMessage({ type: "PRIVYDECK_PAUSE_SITE", domain });
+      if (!res?.ok) throw new Error(res?.error || "Could not pause this site");
+      setStatus(`${domain} paused for this session. Reload the page.`, "ok");
     } else {
       await api("/api/extension/rules", {
         method: "PATCH",
@@ -398,6 +475,7 @@ confirmOkBtn?.addEventListener("click", async () => {
       setStatus(`${domain} blocked everywhere.`, "ok");
     }
     hideConfirm();
+    if (kind === "pause") await renderTabStats();
   } catch (err) {
     setStatus(String(err.message || err), "err");
   }

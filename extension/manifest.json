@@ -2,13 +2,14 @@
   "manifest_version": 3,
   "name": "PrivyDeck Personal Shield",
   "description": "Official PrivyDeck browser protection. Sync ads, tracker, and malware blocklists plus lockdown rules from your account.",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "permissions": [
     "declarativeNetRequest",
     "declarativeNetRequestFeedback",
     "storage",
     "unlimitedStorage",
-    "alarms"
+    "alarms",
+    "webRequest"
   ],
   "host_permissions": ["http://*/*", "https://*/*"],
   "background": {

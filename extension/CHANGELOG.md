@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Version numbers 
 ## Unreleased
 
 - Trust documentation for permissions, sync, and build verification: https://privydeck.com/trust
+
+## 1.4.5 — 2026-09
+
+- Popup lists the hosts blocked on the current tab. The list stays in memory on the device and is not uploaded.
+- Pause protection on the current site for this browser session without adding it to the account allowlist. Resume from the popup.
+- Hide one element on the current site. The selector is stored locally and checked before it is applied.
+- Firefox no longer stubs analytics globals on every page.
 - Tagged GitHub Releases will attach `SHA256SUMS.txt` and Artifact Attestations so production zips can be verified against source.
 
 ## 1.4.4 — 2026-08

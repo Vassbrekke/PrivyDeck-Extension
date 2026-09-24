@@ -1,85 +1,32 @@
 /**
- * Cosmetic filtering - hides ad/tracker UI elements using synced filter rules.
- * Trust/allowlisted sites skip cosmetics entirely (see background PRIVYDECK_GET_COSMETICS).
+ * Cosmetic filtering. Allowlisted and session-paused sites get no cosmetics.
+ * Element hiding is opt-in per click and stored only on this device.
  */
 
 const STYLE_ID = "privydeck-cosmetic-style";
-const SCRIPTLET_FLAG = "data-privydeck-scriptlets";
 
-/** Minimal high-value scriptlet stubs (safe no-ops for common trackers). */
-const SCRIPTLETS = {
-  "abort-current-inline-script": () => {},
-  "abort-on-property-read": (props) => {
-    try {
-      const path = String(props || "").split(".");
-      if (!path[0]) return;
-      let obj = window;
-      for (let i = 0; i < path.length - 1; i++) {
-        obj = obj[path[i]];
-        if (!obj) return;
-      }
-      const last = path[path.length - 1];
-      Object.defineProperty(obj, last, {
-        configurable: true,
-        get() {
-          throw new ReferenceError("PrivyDeck blocked property read");
-        },
-      });
-    } catch {
-      /* ignore */
-    }
-  },
-  "set-constant": (props, value) => {
-    try {
-      const path = String(props || "").split(".");
-      if (!path[0]) return;
-      let v = value;
-      if (value === "true") v = true;
-      else if (value === "false") v = false;
-      else if (value === "undefined") v = undefined;
-      else if (value === "null") v = null;
-      else if (value === "noopFunc") v = () => {};
-      else if (value === "trueFunc") v = () => true;
-      else if (value === "falseFunc") v = () => false;
-      let obj = window;
-      for (let i = 0; i < path.length - 1; i++) {
-        if (!obj[path[i]]) obj[path[i]] = {};
-        obj = obj[path[i]];
-      }
-      Object.defineProperty(obj, path[path.length - 1], {
-        configurable: true,
-        get() {
-          return v;
-        },
-      });
-    } catch {
-      /* ignore */
-    }
-  },
-};
+function isSafeSelector(selector) {
+  return (
+    typeof selector === "string" &&
+    selector.length > 0 &&
+    selector.length < 400 &&
+    !/[{};@]|\/\*|<\/style|url\s*\(|[`\\]|<\/?script/i.test(selector) &&
+    /^[#.\[\]\w\s\-:>+~="'(),*^$|]+$/.test(selector)
+  );
+}
 
 function applySelectors(selectors) {
-  if (!selectors.length) {
+  const safe = (selectors || []).filter(isSafeSelector);
+  if (!safe.length) {
     document.getElementById(STYLE_ID)?.remove();
     return;
   }
-  const safe = selectors.filter(
-    (s) =>
-      typeof s === "string" &&
-      s.length > 0 &&
-      s.length < 400 &&
-      !/[{};@]|\/\*|<\/style|url\s*\(|[`\\]|<\/?script/i.test(s) &&
-      /^[#.\[\]\w\s\-:>+~="'(),*^$|]+$/.test(s)
-  );
-  if (!safe.length) return;
-
   let style = document.getElementById(STYLE_ID);
   if (!style) {
     style = document.createElement("style");
     style.id = STYLE_ID;
     (document.documentElement || document.head || document.body).appendChild(style);
   }
-  // One rule per selector avoids comma-join surprises
   style.textContent = safe
     .map(
       (s) =>
@@ -88,45 +35,91 @@ function applySelectors(selectors) {
     .join("\n");
 }
 
-function applyBasicScriptlets() {
-  if (document.documentElement?.hasAttribute(SCRIPTLET_FLAG)) return;
-  document.documentElement?.setAttribute(SCRIPTLET_FLAG, "1");
-  // Lightweight stubs for common analytics globals when still injected same-origin
-  try {
-    SCRIPTLETS["set-constant"]("ga", "noopFunc");
-    SCRIPTLETS["set-constant"]("__gaTracker", "noopFunc");
-    SCRIPTLETS["set-constant"]("GoogleAnalyticsObject", "undefined");
-  } catch {
-    /* ignore */
-  }
-}
+let cachedSelectors = [];
 
-function run() {
+function refresh() {
   const hostname = location.hostname.toLowerCase();
-  chrome.runtime.sendMessage(
-    { type: "PRIVYDECK_GET_COSMETICS", hostname },
-    (res) => {
-      if (chrome.runtime.lastError || !res?.ok) return;
-      applySelectors(res.selectors || []);
-      if ((res.selectors || []).length > 0 || res.engine === "hybrid" || res.engine === "firefox") {
-        applyBasicScriptlets();
-      }
-    }
-  );
+  chrome.runtime.sendMessage({ type: "PRIVYDECK_GET_COSMETICS", hostname }, (res) => {
+    if (chrome.runtime.lastError || !res?.ok) return;
+    cachedSelectors = res.selectors || [];
+    applySelectors(cachedSelectors);
+  });
 }
 
-// Apply as early as possible at document_start (documentElement is available).
-run();
+function selectorFor(el) {
+  if (!(el instanceof Element)) return "";
+  if (el.id && /^[A-Za-z][\w-]{0,80}$/.test(el.id)) {
+    const sel = `#${el.id}`;
+    return isSafeSelector(sel) ? sel : "";
+  }
+  const tag = el.tagName.toLowerCase();
+  if (!/^[a-z][a-z0-9-]*$/.test(tag)) return "";
+  const classes = [...el.classList].filter((c) => /^[A-Za-z][\w-]{0,40}$/.test(c)).slice(0, 2);
+  if (!classes.length) return "";
+  const sel = `${tag}.${classes.join(".")}`;
+  return isSafeSelector(sel) ? sel : "";
+}
 
-// Re-apply after late SPA mutations (throttled)
+function startZapper() {
+  if (window.top !== window) return;
+  const host = document.createElement("div");
+  const root = host.attachShadow({ mode: "closed" });
+  const bar = document.createElement("div");
+  bar.textContent = "Click an element to hide it on this site. Esc cancels.";
+  bar.setAttribute(
+    "style",
+    "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#0a1f14;color:#f4f4f7;border:1px solid #4ade80;border-radius:8px;padding:8px 12px;font:13px system-ui,sans-serif;"
+  );
+  root.appendChild(bar);
+  document.documentElement.appendChild(host);
+
+  const cleanup = () => {
+    host.remove();
+    document.removeEventListener("click", onClick, true);
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const onKey = (event) => {
+    if (event.key === "Escape") cleanup();
+  };
+  const onClick = (event) => {
+    const target = event.composedPath().find((node) => node instanceof Element && node !== host);
+    if (!target || event.composedPath().includes(host)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const selector = selectorFor(target);
+    cleanup();
+    if (!selector) return;
+    chrome.runtime.sendMessage({ type: "PRIVYDECK_ZAP_SAVE", selector }, () => {
+      cachedSelectors = [...cachedSelectors, selector];
+      applySelectors(cachedSelectors);
+    });
+  };
+  document.addEventListener("keydown", onKey, true);
+  document.addEventListener("click", onClick, true);
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "PRIVYDECK_ZAP_ARM") return;
+  startZapper();
+  sendResponse({ ok: true });
+});
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.cosmeticRules || changes.localCosmetics || changes.allowDomains || changes.pausedSites) {
+    refresh();
+  }
+});
+
+refresh();
+
 let scheduled = false;
 const mo = new MutationObserver(() => {
   if (scheduled) return;
   scheduled = true;
   setTimeout(() => {
     scheduled = false;
-    run();
-  }, 1500);
+    applySelectors(cachedSelectors);
+  }, 800);
 });
 try {
   mo.observe(document.documentElement, { childList: true, subtree: true });

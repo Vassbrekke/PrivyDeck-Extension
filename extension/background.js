@@ -20,6 +20,10 @@ const VERSION_ALARM = "privydeck-version";
 const BLOCK_RULE_OFFSET = 1000;
 const ALLOW_RULE_OFFSET = 5000;
 const FILTER_RULE_OFFSET = 10_000;
+const SESSION_ALLOW_OFFSET = 20_000;
+const MAX_PAUSED_SITES = 20;
+const MAX_LOCAL_COSMETIC_HOSTS = 50;
+const MAX_LOCAL_SELECTORS = 30;
 /** Fallback when the API constant is missing (Firefox=5k, Chromium=30k). */
 const FALLBACK_DYNAMIC_RULES = { firefox: 5_000, chromium: 30_000 };
 const CATEGORY_RULESETS = ["ads", "trackers", "malware", "annoyances"];
@@ -42,6 +46,9 @@ let fxBlockSet = new Set();
 let fxAllowSet = new Set();
 let fxWebRequestInstalled = false;
 let blockedByCategory = { ads: 0, trackers: 0, malware: 0, annoyances: 0 };
+/** tabId → Map(host → count). In-memory only; never synced. */
+const pageBlocks = new Map();
+let blockLoggerInstalled = false;
 
 function isFirefox() {
   return typeof browser !== "undefined" && !!browser.runtime?.getBrowserInfo;
@@ -142,8 +149,58 @@ function domainMatchesSet(hostname, set) {
   return false;
 }
 
-function recordFirefoxBlock(host) {
+function normalizeHost(value) {
+  const host = String(value || "")
+    .toLowerCase()
+    .replace(/^www\./, "")
+    .replace(/\.$/, "");
+  if (!host || host.length > 253 || !/^[a-z0-9.-]+$/.test(host) || host.includes("..")) return "";
+  return host;
+}
+
+function recordPageBlock(tabId, host) {
+  const bare = normalizeHost(host);
+  if (!Number.isInteger(tabId) || tabId < 0 || !bare) return;
+  let hosts = pageBlocks.get(tabId);
+  if (!hosts) {
+    if (pageBlocks.size >= 30) {
+      const oldest = pageBlocks.keys().next().value;
+      pageBlocks.delete(oldest);
+    }
+    hosts = new Map();
+    pageBlocks.set(tabId, hosts);
+  }
+  hosts.set(bare, (hosts.get(bare) || 0) + 1);
+  if (hosts.size > 24) {
+    const first = hosts.keys().next().value;
+    hosts.delete(first);
+  }
+}
+
+function pageBlockList(tabId) {
+  const hosts = pageBlocks.get(tabId);
+  if (!hosts) return [];
+  return [...hosts.entries()]
+    .map(([host, count]) => ({ host, count, category: categorizeHost(host) }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+}
+
+function installBlockLogger() {
+  if (blockLoggerInstalled || isFirefox() || !chrome.webRequest?.onErrorOccurred) return;
+  chrome.webRequest.onErrorOccurred.addListener(
+    (details) => {
+      if (details.error !== "net::ERR_BLOCKED_BY_CLIENT") return;
+      recordPageBlock(details.tabId, hostFromUrl(details.url));
+    },
+    { urls: ["http://*/*", "https://*/*"] }
+  );
+  blockLoggerInstalled = true;
+}
+
+function recordFirefoxBlock(host, tabId) {
   bumpBlockedCategory(host);
+  recordPageBlock(tabId, host);
   chrome.storage.local.get(["blockedTotal"], (data) => {
     chrome.storage.local.set({ blockedTotal: (data.blockedTotal || 0) + 1 });
   });
@@ -180,13 +237,13 @@ function installFirefoxWebRequest() {
       const uncloaked = uncloakHostname(host);
       if (uncloaked && domainMatchesSet(uncloaked, fxAllowSet)) return {};
       if (domainMatchesSet(host, fxBlockSet) || (uncloaked && domainMatchesSet(uncloaked, fxBlockSet))) {
-        recordFirefoxBlock(host);
+        recordFirefoxBlock(host, details.tabId);
         return { cancel: true };
       }
       // Live DNS CNAME uncloak (Firefox blocking listeners may return a Promise)
       return dnsUncloakShouldBlock(host).then((block) => {
         if (!block) return {};
-        recordFirefoxBlock(host);
+        recordFirefoxBlock(host, details.tabId);
         return { cancel: true };
       });
     },
@@ -249,12 +306,14 @@ function enableBadgeCounter() {
   }
 }
 
+function isAllowRule(info) {
+  if (info.rule.rulesetId !== "_dynamic") return false;
+  const id = info.rule.ruleId;
+  return (id >= ALLOW_RULE_OFFSET && id < FILTER_RULE_OFFSET) || id >= SESSION_ALLOW_OFFSET;
+}
+
 function isBlockMatch(info) {
-  return !(
-    info.rule.rulesetId === "_dynamic" &&
-    info.rule.ruleId >= ALLOW_RULE_OFFSET &&
-    info.rule.ruleId < FILTER_RULE_OFFSET
-  );
+  return !isAllowRule(info);
 }
 
 /** getMatchedRules only covers ~5 minutes, so accumulate a running total. */
@@ -415,6 +474,7 @@ async function applyProtectionRules(
 
   await syncStaticRulesets(categories, useAccountRules);
   updateFirefoxSets(blockDomains, allowDomains);
+  await ensureSessionAllows();
 
   return {
     domainRules: domainBlockRules.length,
@@ -714,6 +774,84 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
   return true;
 });
 
+async function readPausedSites() {
+  try {
+    if (chrome.storage.session) {
+      const data = await chrome.storage.session.get("pausedSites");
+      return (Array.isArray(data.pausedSites) ? data.pausedSites : [])
+        .map(normalizeHost)
+        .filter(Boolean)
+        .slice(0, MAX_PAUSED_SITES);
+    }
+  } catch {
+    /* session storage unavailable */
+  }
+  return [];
+}
+
+async function writePausedSites(sites) {
+  const pausedSites = [...new Set(sites.map(normalizeHost).filter(Boolean))].slice(0, MAX_PAUSED_SITES);
+  if (!chrome.storage.session) return pausedSites;
+  await chrome.storage.session.set({ pausedSites });
+  return pausedSites;
+}
+
+function sessionAllowRules(sites) {
+  const types = [
+    "main_frame",
+    "sub_frame",
+    "stylesheet",
+    "script",
+    "xmlhttprequest",
+    "image",
+    "font",
+    "object",
+    "ping",
+    "media",
+    "websocket",
+    "other",
+  ];
+  const rules = [];
+  sites.forEach((domain, index) => {
+    const base = SESSION_ALLOW_OFFSET + index * 2;
+    rules.push(
+      {
+        id: base,
+        priority: 4,
+        action: { type: "allow" },
+        condition: { initiatorDomains: [domain], resourceTypes: types },
+      },
+      {
+        id: base + 1,
+        priority: 4,
+        action: { type: "allow" },
+        condition: { requestDomains: [domain], resourceTypes: types },
+      }
+    );
+  });
+  return rules;
+}
+
+async function ensureSessionAllows() {
+  const sites = await readPausedSites();
+  const existing = await chrome.declarativeNetRequest.getDynamicRules();
+  const removeRuleIds = existing
+    .map((rule) => rule.id)
+    .filter((id) => id >= SESSION_ALLOW_OFFSET && id < SESSION_ALLOW_OFFSET + MAX_PAUSED_SITES * 2);
+  if (!removeRuleIds.length && sites.length === 0) return;
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds,
+    addRules: sessionAllowRules(sites),
+  });
+}
+
+async function hostIsPaused(hostname) {
+  const host = normalizeHost(hostname);
+  if (!host) return false;
+  const sites = await readPausedSites();
+  return sites.some((site) => host === site || host.endsWith(`.${site}`));
+}
+
 async function disconnectAccount() {
   try {
     rulesSocket?.close();
@@ -744,6 +882,7 @@ async function disconnectAccount() {
     "blockedByCategory",
   ]);
   blockedByCategory = { ads: 0, trackers: 0, malware: 0, annoyances: 0 };
+  await writePausedSites([]);
   await appendPolicyLog({ action: "disconnect", detail: "Account disconnected; baseline lists stay on" });
   await applyProtectionRules([], [], false, [], null);
 }
@@ -869,50 +1008,126 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
     return true;
   }
-  if (message?.type === "PRIVYDECK_GET_COSMETICS") {
-    const hostname = String(message.hostname || "").toLowerCase();
-    chrome.storage.local.get(["cosmeticRules", "allowDomains"], (data) => {
-      const allow = new Set((data.allowDomains || []).map((d) => String(d).toLowerCase()));
-      if ([...allow].some((d) => hostname === d || hostname.endsWith(`.${d}`))) {
-        sendResponse({ ok: true, selectors: [] });
-        return;
+  if (message?.type === "PRIVYDECK_PAGE_STATS") {
+    const tabId = Number.isInteger(message.tabId) ? message.tabId : -1;
+    const domain = normalizeHost(message.domain);
+    (async () => {
+      let blockedOnPage = 0;
+      if (tabId >= 0 && chrome.declarativeNetRequest?.getMatchedRules) {
+        try {
+          const { rulesMatchedInfo } = await chrome.declarativeNetRequest.getMatchedRules({ tabId });
+          blockedOnPage = rulesMatchedInfo.filter(isBlockMatch).length;
+        } catch {
+          blockedOnPage = 0;
+        }
       }
-      const selectors = [];
-      for (const rule of data.cosmeticRules || []) {
-        if (rule.exception) continue;
-        const domains = rule.domains || [];
-        const matches =
-          domains.length === 0 ||
-          domains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
-        if (!matches) continue;
-        for (const s of rule.selectors || []) selectors.push(s);
+      const paused = domain ? await hostIsPaused(domain) : false;
+      sendResponse({ ok: true, blockedOnPage, paused, hosts: pageBlockList(tabId) });
+    })().catch(() => sendResponse({ ok: false, blockedOnPage: 0, paused: false, hosts: [] }));
+    return true;
+  }
+  if (message?.type === "PRIVYDECK_PAUSE_SITE") {
+    const domain = normalizeHost(message.domain);
+    if (!domain) {
+      sendResponse({ ok: false, error: "That site cannot be paused." });
+      return;
+    }
+    readPausedSites()
+      .then((sites) => writePausedSites([...sites, domain]))
+      .then(() => ensureSessionAllows())
+      .then(() => appendPolicyLog({ action: "pause", domain, detail: "Session pause; not allowlisted" }))
+      .then(() => sendResponse({ ok: true, domain }))
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (message?.type === "PRIVYDECK_RESUME_SITE") {
+    const domain = normalizeHost(message.domain);
+    readPausedSites()
+      .then((sites) => writePausedSites(sites.filter((site) => site !== domain)))
+      .then(() => ensureSessionAllows())
+      .then(() => appendPolicyLog({ action: "resume", domain, detail: "Session pause cleared" }))
+      .then(() => sendResponse({ ok: true, domain }))
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (message?.type === "PRIVYDECK_ZAP_SAVE") {
+    const selector = String(message.selector || "");
+    const host = normalizeHost(hostFromUrl(senderTabUrl(_sender)));
+    if (!host || !isSafeCosmeticSelector(selector)) {
+      sendResponse({ ok: false, error: "That element cannot be hidden safely." });
+      return;
+    }
+    chrome.storage.local.get(["localCosmetics"], (data) => {
+      const all = data.localCosmetics && typeof data.localCosmetics === "object" ? data.localCosmetics : {};
+      const current = Array.isArray(all[host]) ? all[host].filter(isSafeCosmeticSelector) : [];
+      if (!current.includes(selector)) current.push(selector);
+      const nextHost = current.slice(-MAX_LOCAL_SELECTORS);
+      const hosts = Object.keys(all);
+      if (!all[host] && hosts.length >= MAX_LOCAL_COSMETIC_HOSTS) {
+        delete all[hosts[0]];
       }
-      const except = new Set();
-      for (const rule of data.cosmeticRules || []) {
-        if (!rule.exception) continue;
-        const domains = rule.domains || [];
-        const matches =
-          domains.length === 0 ||
-          domains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
-        if (!matches) continue;
-        for (const s of rule.selectors || []) except.add(s);
-      }
-      sendResponse({
-        ok: true,
-        selectors: selectors
-          .filter((s) => !except.has(s) && isSafeCosmeticSelector(s))
-          .slice(0, isFirefox() ? firefoxCosmeticLimit() : chromiumCosmeticLimit()),
-        engine: isFirefox() ? "hybrid" : "dnr",
-        engineHint: engineLabel(isFirefox()),
+      all[host] = nextHost;
+      chrome.storage.local.set({ localCosmetics: all }, () => {
+        sendResponse({ ok: true, selector });
       });
     });
     return true;
   }
+  if (message?.type === "PRIVYDECK_GET_COSMETICS") {
+    const hostname = normalizeHost(message.hostname);
+    hostIsPaused(hostname)
+      .then((paused) => {
+        if (paused) {
+          sendResponse({ ok: true, selectors: [], paused: true });
+          return;
+        }
+        chrome.storage.local.get(["cosmeticRules", "allowDomains", "localCosmetics"], (data) => {
+          const allow = new Set((data.allowDomains || []).map((d) => normalizeHost(d)).filter(Boolean));
+          if ([...allow].some((d) => hostname === d || hostname.endsWith(`.${d}`))) {
+            sendResponse({ ok: true, selectors: [] });
+            return;
+          }
+          const selectors = [];
+          for (const rule of data.cosmeticRules || []) {
+            if (rule.exception) continue;
+            const domains = (rule.domains || []).map(normalizeHost).filter(Boolean);
+            const matches = domains.length === 0 || domains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+            if (!matches) continue;
+            for (const s of rule.selectors || []) selectors.push(s);
+          }
+          const local = data.localCosmetics?.[hostname];
+          if (Array.isArray(local)) selectors.push(...local);
+          const except = new Set();
+          for (const rule of data.cosmeticRules || []) {
+            if (!rule.exception) continue;
+            const domains = (rule.domains || []).map(normalizeHost).filter(Boolean);
+            const matches = domains.length === 0 || domains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+            if (!matches) continue;
+            for (const s of rule.selectors || []) except.add(s);
+          }
+          sendResponse({
+            ok: true,
+            selectors: selectors
+              .filter((s) => !except.has(s) && isSafeCosmeticSelector(s))
+              .slice(0, isFirefox() ? firefoxCosmeticLimit() : chromiumCosmeticLimit()),
+            engine: isFirefox() ? "hybrid" : "dnr",
+            engineHint: engineLabel(isFirefox()),
+          });
+        });
+      })
+      .catch(() => sendResponse({ ok: true, selectors: [] }));
+    return true;
+  }
 });
+
+function senderTabUrl(sender) {
+  return sender?.tab?.url || sender?.url || "";
+}
 
 chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 5 });
 chrome.alarms.create(VERSION_ALARM, { periodInMinutes: 2 });
 enableBadgeCounter();
+installBlockLogger();
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === SYNC_ALARM) {
@@ -944,6 +1159,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   rulesSocket = null;
   rulesSocketUserId = null;
+});
+
+chrome.tabs?.onRemoved?.addListener((tabId) => {
+  pageBlocks.delete(tabId);
 });
 
 chrome.runtime.onStartup.addListener(() => {

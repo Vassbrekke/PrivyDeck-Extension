@@ -1,6 +1,6 @@
 {
   "name": "privydeck-extension",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": false,
   "description": "PrivyDeck Personal Shield — open-source browser extension for ads, trackers, and malware blocking with optional account sync.",
   "engines": {
